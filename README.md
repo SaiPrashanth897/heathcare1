@@ -47,7 +47,19 @@ Smart Care Assistant is a modern web application designed to support junior doct
 ## 🛠️ Setup & Installation
 
 1. Clone the repository:
-   git clone https://github.com/your-username/smart-care-assistant.git
+   git clone https://github.com/SaiPrashanth897/heathcare1)
    cd smart-care-assistant
+
+   #excuation
+   
+   1.clone by repo
+   
+   2.open file
+   
+   3.open hackthon in it
+   
+   4.run landing-page.html
+   
+
 
 
