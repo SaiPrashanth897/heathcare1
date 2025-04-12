@@ -1,7 +1,14 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js";
 import {
-  getFirestore, collection, getDocs, addDoc, doc, updateDoc,
-  onSnapshot, query, where
+  getFirestore,
+  collection,
+  getDocs,
+  addDoc,
+  doc,
+  updateDoc,
+  onSnapshot,
+  query,
+  where
 } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore.js";
 
 // Firebase config
@@ -18,7 +25,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Elements
+// DOM Elements
 const patientSelect = document.getElementById("patientSelect");
 const diseaseSelect = document.getElementById("diseaseSelect");
 const medicineSelect = document.getElementById("medicineSelect");
@@ -26,6 +33,7 @@ const form = document.getElementById("prescriptionForm");
 const interactionResult = document.getElementById("interactionResult");
 const prescriptionsTable = document.getElementById("prescriptionsTable");
 
+// Disease to medicine mapping
 const diseaseMedicineMap = {
   Hypertension: ["Losartan", "Amlodipine", "Enalapril", "Warfarin", "Aspirin"],
   Diabetes: ["Metformin", "Insulin", "Glipizide", "Cimetidine"],
@@ -33,19 +41,18 @@ const diseaseMedicineMap = {
   HeartDisease: ["Aspirin", "Clopidogrel", "Warfarin"]
 };
 
-
-// Load patients
+// Load patients into dropdown
 async function loadPatients() {
   const snapshot = await getDocs(collection(db, "patients"));
-  snapshot.forEach(doc => {
+  snapshot.forEach(docSnap => {
     const option = document.createElement("option");
-    option.value = doc.id;
-    option.textContent = doc.data().name;
+    option.value = docSnap.id;
+    option.textContent = docSnap.data().name;
     patientSelect.appendChild(option);
   });
 }
 
-// Handle disease selection
+// Populate medicine options based on disease
 diseaseSelect.addEventListener("change", () => {
   const disease = diseaseSelect.value;
   medicineSelect.innerHTML = `<option value="">Select</option>`;
@@ -59,7 +66,7 @@ diseaseSelect.addEventListener("change", () => {
   }
 });
 
-// Submit prescription
+// Form submission
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
@@ -69,23 +76,23 @@ form.addEventListener("submit", async (e) => {
   const dosage = document.getElementById("dosage").value;
   const frequency = document.getElementById("frequency").value;
 
-  const prescription = {
-    patientId,
-    disease,
-    medicine,
-    dosage,
-    frequency,
-    status: "Active",
-    timestamp: Date.now()
-  };
+  if (!patientId || !disease || !medicine || !dosage || !frequency) {
+    interactionResult.textContent = "❗ All fields are required.";
+    interactionResult.style.color = "red";
+    interactionResult.classList.remove("hidden");
+    return;
+  }
 
-  interactionResult.textContent = "Checking for interactions..."; // Show temporary loading state
+  interactionResult.textContent = "🔄 Checking for interactions...";
+  interactionResult.style.color = "black";
+  interactionResult.classList.remove("hidden");
 
   const adr = await checkADR(patientId, medicine);
 
   if (adr.possible) {
     interactionResult.textContent = `⚠️ ${adr.reason}`;
     interactionResult.style.color = "red";
+
     await addDoc(collection(db, "adr_alerts"), {
       patientId,
       medicine,
@@ -95,15 +102,24 @@ form.addEventListener("submit", async (e) => {
       acknowledged: false
     });
   } else {
-    interactionResult.textContent = "✅ No known interactions found.";
+    interactionResult.textContent = "✅ No known interactions.";
     interactionResult.style.color = "green";
   }
 
-  await addDoc(collection(db, "prescriptions"), prescription);
+  await addDoc(collection(db, "prescriptions"), {
+    patientId,
+    disease,
+    medicine,
+    dosage,
+    frequency,
+    status: "Active",
+    timestamp: Date.now()
+  });
+
   form.reset();
 });
 
-// ADR Checker using RxNav
+// ADR checker using RxNav
 async function checkADR(patientId, newMedicine) {
   try {
     const cuiRes = await fetch(`https://rxnav.nlm.nih.gov/REST/rxcui.json?name=${encodeURIComponent(newMedicine)}&search=2`);
@@ -111,16 +127,17 @@ async function checkADR(patientId, newMedicine) {
     const newRxCUI = cuiData.idGroup?.rxnormId?.[0];
 
     if (!newRxCUI) {
-      console.warn("❗ RxCUI not found for:", newMedicine);
+      console.warn("RxCUI not found for:", newMedicine);
       return { possible: false };
     }
 
     const q = query(collection(db, "prescriptions"),
       where("patientId", "==", patientId),
       where("status", "==", "Active"));
-    const snapshot = await getDocs(q);
 
+    const snapshot = await getDocs(q);
     const medNames = snapshot.docs.map(doc => doc.data().medicine);
+
     const cuiPromises = medNames.map(async name => {
       const res = await fetch(`https://rxnav.nlm.nih.gov/REST/rxcui.json?name=${encodeURIComponent(name)}&search=2`);
       const data = await res.json();
@@ -147,50 +164,56 @@ async function checkADR(patientId, newMedicine) {
     return { possible: false };
   } catch (error) {
     console.error("ADR Check Error:", error);
-    interactionResult.textContent = "Error checking for interactions.";
+    interactionResult.textContent = "Error checking interactions.";
     interactionResult.style.color = "orange";
     return { possible: false };
   }
 }
 
-// Load prescriptions into table
+// Real-time prescription list
 function loadPrescriptions() {
   const q = collection(db, "prescriptions");
+
   onSnapshot(q, async (snapshot) => {
     prescriptionsTable.innerHTML = "";
-    for (const docSnap of snapshot.docs) {
+    const patientDocs = await getDocs(collection(db, "patients"));
+    const patientMap = {};
+    patientDocs.forEach(doc => {
+      patientMap[doc.id] = doc.data().name;
+    });
+
+    snapshot.forEach(docSnap => {
       const data = docSnap.data();
-      const patientDoc = await getDocs(collection(db, "patients"));
-      const patient = patientDoc.docs.find(p => p.id === data.patientId)?.data()?.name || "Unknown";
+      const patientName = patientMap[data.patientId] || "Unknown";
 
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td class="p-2 border">${patient}</td>
+        <td class="p-2 border">${patientName}</td>
         <td class="p-2 border">${data.medicine}</td>
         <td class="p-2 border">${data.dosage} mg</td>
         <td class="p-2 border">${data.status}</td>
         <td class="p-2 border space-x-2">
-          <button class="bg-green-500 text-white px-2 py-1 rounded" onclick="markCompleted('${docSnap.id}')">Complete</button>
+          <button class="bg-green-600 text-white px-2 py-1 rounded" onclick="markCompleted('${docSnap.id}')">Complete</button>
           <button class="bg-yellow-500 text-white px-2 py-1 rounded" onclick="markModified('${docSnap.id}')">Modify</button>
         </td>
       `;
       prescriptionsTable.appendChild(tr);
-    }
+    });
   });
 }
 
-// Mark as completed
+// Mark prescription as Completed
 window.markCompleted = async function (id) {
   const docRef = doc(db, "prescriptions", id);
   await updateDoc(docRef, { status: "Completed" });
 };
 
-// Mark as modified
+// Mark prescription as Modified
 window.markModified = async function (id) {
   const docRef = doc(db, "prescriptions", id);
   await updateDoc(docRef, { status: "Modified" });
 };
 
-// Initialize on load
+// Init
 loadPatients();
 loadPrescriptions();
